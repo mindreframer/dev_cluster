@@ -45,7 +45,7 @@ defmodule DevCluster.Cluster do
   end
 
   def handle_call(:shutdown, _from, state) do
-    case shutdown_members(state.members) do
+    case shutdown_members(state.members, state.options) do
       [] -> {:reply, :ok, %{state | members: []}}
       errors -> {:reply, {:error, {:cluster_shutdown_failed, errors}}, %{state | members: []}}
     end
@@ -57,7 +57,7 @@ defmodule DevCluster.Cluster do
         {:reply, :ok, state}
 
       member ->
-        case shutdown_member(member) do
+        case shutdown_member(member, state.options) do
           {:ok, result} ->
             members = List.delete(state.members, member)
             {:reply, result, %{state | members: members}}
@@ -78,12 +78,12 @@ defmodule DevCluster.Cluster do
 
   @impl GenServer
   def terminate(_reason, state) do
-    shutdown_members(state.members)
+    shutdown_members(state.members, state.options)
     :ok
   end
 
   defp add_members(state, amount) do
-    case start_members(state.prefix, state.next_index, amount, []) do
+    case start_members(state.prefix, state.next_index, amount, state.options, []) do
       {:ok, members} ->
         case configure_members(members, state.options) do
           :ok ->
@@ -96,36 +96,47 @@ defmodule DevCluster.Cluster do
             {:ok, modified, members}
 
           {:error, reason} ->
-            {:error, add_cleanup_errors(reason, rollback(members))}
+            {:error, add_cleanup_errors(reason, rollback(members, state.options))}
         end
 
       {:error, reason, started} ->
-        {:error, add_cleanup_errors(reason, rollback(started))}
+        {:error, add_cleanup_errors(reason, rollback(started, state.options))}
     end
   end
 
-  defp start_members(_prefix, _index, 0, members), do: {:ok, Enum.reverse(members)}
+  defp start_members(_prefix, _index, 0, _cluster_options, members),
+    do: {:ok, Enum.reverse(members)}
 
-  defp start_members(prefix, index, remaining, members) do
+  defp start_members(prefix, index, remaining, cluster_options, members) do
     short_name = String.to_atom("#{prefix}#{index}")
 
-    options = %{
-      name: short_name,
-      host: ~c"127.0.0.1",
-      longnames: true,
-      wait_boot: @rpc_timeout
-    }
+    options =
+      %{
+        name: short_name,
+        host: ~c"127.0.0.1",
+        longnames: true,
+        wait_boot: @rpc_timeout
+      }
+      |> maybe_hide_peer(cluster_options)
 
     case :peer.start_link(options) do
       {:ok, peer, node} ->
         member = %Member{peer: peer, node: node}
-        start_members(prefix, index + 1, remaining - 1, [member | members])
+        start_members(prefix, index + 1, remaining - 1, cluster_options, [member | members])
 
       {:error, reason} ->
         {:error, {:peer_start_failed, short_name, reason}, Enum.reverse(members)}
 
       other ->
         {:error, {:peer_start_failed, short_name, other}, Enum.reverse(members)}
+    end
+  end
+
+  defp maybe_hide_peer(options, cluster_options) do
+    if Keyword.get(cluster_options, :hidden, false) do
+      Map.put(options, :args, [~c"-hidden"])
+    else
+      options
     end
   end
 
@@ -280,16 +291,18 @@ defmodule DevCluster.Cluster do
   defp find_member(members, peer) when is_pid(peer), do: Enum.find(members, &(&1.peer == peer))
   defp find_member(_members, _selector), do: nil
 
-  defp rollback(members), do: shutdown_members(members)
+  defp rollback(members, options), do: shutdown_members(members, options)
 
-  defp shutdown_members([]), do: []
+  defp shutdown_members([], _options), do: []
 
-  defp shutdown_members(members) do
+  defp shutdown_members(members, options) do
+    timeout = Keyword.get(options, :cluster_shutdown_timeout, @cluster_shutdown_timeout)
+
     members
-    |> Task.async_stream(&shutdown_member/1,
+    |> Task.async_stream(&shutdown_member(&1, options),
       max_concurrency: length(members),
       ordered: true,
-      timeout: @cluster_shutdown_timeout,
+      timeout: timeout,
       on_timeout: :kill_task
     )
     |> Enum.zip(members)
@@ -318,10 +331,11 @@ defmodule DevCluster.Cluster do
   defp add_cleanup_errors(reason, errors),
     do: {:startup_failed, reason, {:cleanup_failed, errors}}
 
-  defp shutdown_member(member) do
-    coverage_result = detach_coverage(member.node)
+  defp shutdown_member(member, options) do
+    timeout = Keyword.get(options, :shutdown_timeout, @shutdown_timeout)
+    coverage_result = detach_coverage(member.node, timeout)
 
-    case stop_peer(member.peer) do
+    case stop_peer(member.peer, timeout) do
       :ok ->
         {:ok, coverage_result}
 
@@ -343,7 +357,7 @@ defmodule DevCluster.Cluster do
   defp combine_cleanup_errors({:error, coverage_error}, peer_error),
     do: {:multiple_cleanup_failures, [coverage_error, peer_error]}
 
-  defp stop_peer(peer) do
+  defp stop_peer(peer, timeout) do
     run_bounded(
       fn ->
         try do
@@ -354,7 +368,7 @@ defmodule DevCluster.Cluster do
           kind, reason -> {:error, {kind, reason}}
         end
       end,
-      @shutdown_timeout,
+      timeout,
       :peer_stop_timeout
     )
   end
@@ -376,7 +390,7 @@ defmodule DevCluster.Cluster do
     end
   end
 
-  defp detach_coverage(node) do
+  defp detach_coverage(node, timeout) do
     if Process.whereis(:cover_server) do
       run_bounded(
         fn ->
@@ -389,7 +403,7 @@ defmodule DevCluster.Cluster do
             kind, reason -> {:error, {:coverage_stop_failed, node, {kind, reason}}}
           end
         end,
-        @shutdown_timeout,
+        timeout,
         {:coverage_stop_timeout, node}
       )
     else

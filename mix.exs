@@ -29,7 +29,7 @@ defmodule DevCluster.MixProject do
 
   defp package do
     [
-      files: ["lib", "mix.exs", "README.md", "LICENSE"],
+      files: ["lib", "mix.exs", "README.md", "CHANGELOG.md", "LICENSE"],
       licenses: ["MIT"]
     ]
   end

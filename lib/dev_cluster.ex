@@ -13,15 +13,27 @@ defmodule DevCluster do
   @timeout 30_000
   @cluster_shutdown_timeout 7_000
   @controller_stop_timeout 1_000
-  @cluster_option_keys [:applications, :environment, :files, :name, :prefix]
+  @cluster_option_keys [
+    :applications,
+    :cluster_shutdown_timeout,
+    :environment,
+    :files,
+    :hidden,
+    :name,
+    :prefix,
+    :shutdown_timeout
+  ]
 
   @type cluster :: GenServer.server()
   @type option ::
           {:applications, [atom()]}
+          | {:cluster_shutdown_timeout, pos_integer()}
           | {:environment, keyword()}
           | {:files, [Path.t()]}
+          | {:hidden, boolean()}
           | {:name, GenServer.name()}
           | {:prefix, atom() | String.t()}
+          | {:shutdown_timeout, pos_integer()}
 
   @doc """
   Starts Erlang distribution for the current VM.
@@ -119,15 +131,52 @@ defmodule DevCluster do
 
   def start(_cluster, amount), do: {:error, {:invalid_amount, amount}}
 
-  @doc "Stops a cluster and all of its nodes within a bounded deadline."
+  @doc """
+  Stops a cluster and all of its nodes within the default public deadline.
+
+  Use `stop/2` when a custom `:cluster_shutdown_timeout` requires a longer
+  public `:timeout`.
+  """
   @spec stop(cluster()) :: :ok | {:error, term()}
-  def stop(cluster) do
+  def stop(cluster),
+    do: stop_cluster(cluster, @cluster_shutdown_timeout, @controller_stop_timeout)
+
+  @doc """
+  Stops a cluster with custom deadlines, or stops one selected member.
+
+  A keyword list accepts `:timeout` and `:controller_timeout`, both in
+  milliseconds. A member can instead be selected by struct, node name, or peer
+  PID.
+  """
+  @spec stop(cluster(), keyword() | Member.t() | node() | pid()) :: :ok | {:error, term()}
+  def stop(cluster, opts_or_selector)
+
+  def stop(cluster, opts) when is_list(opts) do
+    with :ok <- validate_stop_options(opts) do
+      stop_cluster(
+        cluster,
+        Keyword.get(opts, :timeout, @cluster_shutdown_timeout),
+        Keyword.get(opts, :controller_timeout, @controller_stop_timeout)
+      )
+    end
+  end
+
+  def stop(cluster, selector),
+    do: GenServer.call(cluster, {:stop, selector}, @timeout)
+
+  @doc "Stops Erlang distribution for the current VM."
+  @spec stop_distribution() :: :ok | {:error, term()}
+  def stop_distribution do
+    if Node.alive?(), do: :net_kernel.stop(), else: :ok
+  end
+
+  defp stop_cluster(cluster, shutdown_timeout, controller_timeout) do
     result =
       try do
-        GenServer.call(cluster, :shutdown, @cluster_shutdown_timeout)
+        GenServer.call(cluster, :shutdown, shutdown_timeout)
       catch
         :exit, {:timeout, _call} ->
-          case force_stop_cluster(cluster) do
+          case force_stop_cluster(cluster, controller_timeout) do
             :ok ->
               {:error, :cluster_shutdown_timeout}
 
@@ -139,30 +188,19 @@ defmodule DevCluster do
           :ok
       end
 
-    stop_cluster_controller(cluster, result)
+    stop_cluster_controller(cluster, result, controller_timeout)
   end
 
-  @doc "Stops one member, selected by member struct, node name, or peer PID."
-  @spec stop(cluster(), Member.t() | node() | pid()) :: :ok | {:error, term()}
-  def stop(cluster, selector),
-    do: GenServer.call(cluster, {:stop, selector}, @timeout)
-
-  @doc "Stops Erlang distribution for the current VM."
-  @spec stop_distribution() :: :ok | {:error, term()}
-  def stop_distribution do
-    if Node.alive?(), do: :net_kernel.stop(), else: :ok
-  end
-
-  defp stop_cluster_controller(cluster, result) do
+  defp stop_cluster_controller(cluster, result, controller_timeout) do
     try do
-      GenServer.stop(cluster, :normal, @controller_stop_timeout)
+      GenServer.stop(cluster, :normal, controller_timeout)
       result
     catch
       :exit, {:noproc, _call} ->
         result
 
       :exit, {:timeout, _call} ->
-        case force_stop_cluster(cluster) do
+        case force_stop_cluster(cluster, controller_timeout) do
           :ok ->
             merge_stop_error(result, :cluster_controller_stop_timeout)
 
@@ -174,7 +212,7 @@ defmodule DevCluster do
     end
   end
 
-  defp force_stop_cluster(cluster) do
+  defp force_stop_cluster(cluster, controller_timeout) do
     case GenServer.whereis(cluster) do
       pid when is_pid(pid) ->
         Process.unlink(pid)
@@ -184,7 +222,7 @@ defmodule DevCluster do
         receive do
           {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
         after
-          @controller_stop_timeout ->
+          controller_timeout ->
             Process.demonitor(monitor_ref, [:flush])
             {:error, :cluster_controller_force_stop_timeout}
         end
@@ -229,8 +267,38 @@ defmodule DevCluster do
       not valid_files?(Keyword.get(opts, :files, [])) ->
         {:error, {:invalid_files, Keyword.get(opts, :files)}}
 
+      not is_boolean(Keyword.get(opts, :hidden, false)) ->
+        {:error, {:invalid_hidden, Keyword.get(opts, :hidden)}}
+
+      not valid_timeout?(Keyword.get(opts, :shutdown_timeout, 5_000)) ->
+        {:error, {:invalid_shutdown_timeout, Keyword.get(opts, :shutdown_timeout)}}
+
+      not valid_timeout?(Keyword.get(opts, :cluster_shutdown_timeout, 6_000)) ->
+        {:error,
+         {:invalid_cluster_shutdown_timeout, Keyword.get(opts, :cluster_shutdown_timeout)}}
+
       not valid_environment?(Keyword.get(opts, :environment, [])) ->
         {:error, {:invalid_environment, Keyword.get(opts, :environment)}}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp validate_stop_options(opts) do
+    cond do
+      not Keyword.keyword?(opts) ->
+        {:error, {:invalid_stop_options, opts}}
+
+      Keyword.keys(opts) -- [:timeout, :controller_timeout] != [] ->
+        {:error,
+         {:unknown_stop_options, Enum.uniq(Keyword.keys(opts) -- [:timeout, :controller_timeout])}}
+
+      not valid_timeout?(Keyword.get(opts, :timeout, @cluster_shutdown_timeout)) ->
+        {:error, {:invalid_stop_timeout, Keyword.get(opts, :timeout)}}
+
+      not valid_timeout?(Keyword.get(opts, :controller_timeout, @controller_stop_timeout)) ->
+        {:error, {:invalid_controller_timeout, Keyword.get(opts, :controller_timeout)}}
 
       true ->
         :ok
@@ -259,6 +327,7 @@ defmodule DevCluster do
   defp valid_name?({:via, module, _term}) when is_atom(module), do: true
   defp valid_name?(_name), do: false
 
+  defp valid_timeout?(timeout), do: is_integer(timeout) and timeout > 0
   defp valid_prefix?(prefix), do: is_atom(prefix) or is_binary(prefix)
   defp valid_applications?(apps), do: is_list(apps) and Enum.all?(apps, &is_atom/1)
   defp valid_files?(files), do: is_list(files) and Enum.all?(files, &is_binary/1)

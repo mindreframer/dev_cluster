@@ -108,8 +108,19 @@ Nodes can be added later without reusing names of removed members:
 - `environment: [my_app: [key: value]]` — application environment overrides.
 - `files: [absolute_path]` — files required on every node, useful for test-only
   modules.
+- `hidden: true` — starts hidden Erlang nodes. This is useful for parallel tests
+  that do not exercise `:global` because separate clusters will not merge their
+  global registries.
 - `name: :registered_cluster` — registers the cluster controller.
 - `prefix: "worker_"` — produces names such as `worker_1@127.0.0.1`.
+- `shutdown_timeout: milliseconds` — graceful per-member shutdown deadline.
+- `cluster_shutdown_timeout: milliseconds` — overall concurrent member-shutdown
+  deadline.
+
+`DevCluster.stop/2` also accepts `timeout:` and `controller_timeout:` for a
+custom public shutdown deadline. When `cluster_shutdown_timeout` exceeds the
+seven-second `stop/1` deadline, call `stop/2` with a larger `timeout`. Production
+defaults remain in use unless these options are explicitly provided.
 
 The manager code paths, Mix environment, logger level, and application
 configuration are copied before selected applications start.
@@ -132,6 +143,23 @@ Explicit prefixes can still collide if two clusters use the same prefix at the
 same time. Use generated defaults for concurrent clusters. Erlang node names
 are atoms, so avoid creating unbounded numbers of unique explicit prefixes in a
 long-lived VM.
+
+## Test concurrency
+
+Independent clusters can be tested from `async: true` ExUnit modules when node
+names and external resources are unique. Use `hidden: true` to prevent unrelated
+parallel clusters from interacting through `:global`; tests specifically
+covering `:global` should use visible nodes and remain synchronous. Keep tests
+that manipulate VM-global state such as `:cover_server` synchronous, and use a
+modest `max_cases` value because every cluster member is a full BEAM process. The package's own suite
+marks shutdown-timeout scenarios as `:heavy`, so they can be targeted directly:
+
+```bash
+mix test --exclude heavy
+mix test --only heavy
+```
+
+Release notes are available in [CHANGELOG.md](CHANGELOG.md).
 
 ## Origins
 
