@@ -1,6 +1,8 @@
 defmodule DevClusterTest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias DevCluster.Member
 
   test "distribution startup is idempotent and uses a unique manager name" do
@@ -66,19 +68,22 @@ defmodule DevClusterTest do
   end
 
   test "adding members keeps node indexes monotonic after removals" do
-    prefix = unique_prefix("index")
-    {:ok, cluster} = DevCluster.start_link(3, prefix: prefix)
-    {:ok, [_node1, node2, _node3]} = DevCluster.nodes(cluster)
-    :ok = DevCluster.stop(cluster, node2)
+    capture_log(fn ->
+      prefix = unique_prefix("index")
+      {:ok, cluster} = DevCluster.start_link(3, prefix: prefix)
+      {:ok, [_node1, node2, _node3]} = DevCluster.nodes(cluster)
+      :ok = DevCluster.stop(cluster, node2)
 
-    {:ok, [%Member{node: node4}]} = DevCluster.start(cluster, 1)
-    assert node4 == String.to_atom("#{prefix}4@127.0.0.1")
-    :ok = DevCluster.stop(cluster, node4)
+      {:ok, [%Member{node: node4}]} = DevCluster.start(cluster, 1)
+      assert node4 == String.to_atom("#{prefix}4@127.0.0.1")
+      :ok = DevCluster.stop(cluster, node4)
 
-    {:ok, [%Member{node: node5}]} = DevCluster.start(cluster, 1)
-    assert node5 == String.to_atom("#{prefix}5@127.0.0.1")
+      {:ok, [%Member{node: node5}]} = DevCluster.start(cluster, 1)
+      assert node5 == String.to_atom("#{prefix}5@127.0.0.1")
 
-    :ok = DevCluster.stop(cluster)
+      :ok = DevCluster.stop(cluster)
+      Process.sleep(500)
+    end)
   end
 
   test "copies environment and starts selected applications" do
@@ -206,6 +211,24 @@ defmodule DevClusterTest do
     assert elapsed < 7_000_000
     refute Process.alive?(cluster)
     refute Enum.any?(blocked_members, &Process.alive?(&1.peer))
+  end
+
+  test "public shutdown has a deadline when the controller is suspended" do
+    {:ok, cluster} = DevCluster.start_link(1, prefix: unique_prefix("suspended_cluster"))
+    {:ok, [%Member{node: node}]} = DevCluster.members(cluster)
+    :ok = :sys.suspend(cluster)
+    caller = self()
+
+    capture_log(fn ->
+      {elapsed, result} = :timer.tc(fn -> DevCluster.stop(cluster) end)
+      node_stopped? = eventually(fn -> Node.ping(node) == :pang end)
+      Process.sleep(100)
+      send(caller, {:stop_result, elapsed, result, node_stopped?})
+    end)
+
+    assert_receive {:stop_result, elapsed, {:error, :cluster_shutdown_timeout}, true}
+    assert elapsed < 9_000_000
+    refute Process.alive?(cluster)
   end
 
   test "owner death stops its cluster nodes and peer controllers" do

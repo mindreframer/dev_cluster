@@ -327,11 +327,21 @@ defmodule DevCluster.Cluster do
 
       {:error, reason} ->
         case force_stop_peer(member.peer) do
-          :ok -> {:ok, {:error, {:peer_stop_failed_but_forced, reason}}}
-          {:error, force_reason} -> {:error, {:peer_stop_failed, reason, force_reason}}
+          :ok ->
+            peer_error = {:peer_stop_failed_but_forced, reason}
+            {:ok, {:error, combine_cleanup_errors(coverage_result, peer_error)}}
+
+          {:error, force_reason} ->
+            peer_error = {:peer_stop_failed, reason, force_reason}
+            {:error, combine_cleanup_errors(coverage_result, peer_error)}
         end
     end
   end
+
+  defp combine_cleanup_errors(:ok, peer_error), do: peer_error
+
+  defp combine_cleanup_errors({:error, coverage_error}, peer_error),
+    do: {:multiple_cleanup_failures, [coverage_error, peer_error]}
 
   defp stop_peer(peer) do
     run_bounded(

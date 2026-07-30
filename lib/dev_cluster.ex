@@ -11,6 +11,8 @@ defmodule DevCluster do
   alias DevCluster.{Cluster, Member}
 
   @timeout 30_000
+  @cluster_shutdown_timeout 7_000
+  @controller_stop_timeout 1_000
   @cluster_option_keys [:applications, :environment, :files, :name, :prefix]
 
   @type cluster :: GenServer.server()
@@ -120,9 +122,24 @@ defmodule DevCluster do
   @doc "Stops a cluster and all of its nodes within a bounded deadline."
   @spec stop(cluster()) :: :ok | {:error, term()}
   def stop(cluster) do
-    result = GenServer.call(cluster, :shutdown, :infinity)
-    GenServer.stop(cluster, :normal, @timeout)
-    result
+    result =
+      try do
+        GenServer.call(cluster, :shutdown, @cluster_shutdown_timeout)
+      catch
+        :exit, {:timeout, _call} ->
+          case force_stop_cluster(cluster) do
+            :ok ->
+              {:error, :cluster_shutdown_timeout}
+
+            {:error, force_error} ->
+              {:error, {:multiple_errors, [:cluster_shutdown_timeout, force_error]}}
+          end
+
+        :exit, {:noproc, _call} ->
+          :ok
+      end
+
+    stop_cluster_controller(cluster, result)
   end
 
   @doc "Stops one member, selected by member struct, node name, or peer PID."
@@ -135,6 +152,55 @@ defmodule DevCluster do
   def stop_distribution do
     if Node.alive?(), do: :net_kernel.stop(), else: :ok
   end
+
+  defp stop_cluster_controller(cluster, result) do
+    try do
+      GenServer.stop(cluster, :normal, @controller_stop_timeout)
+      result
+    catch
+      :exit, {:noproc, _call} ->
+        result
+
+      :exit, {:timeout, _call} ->
+        case force_stop_cluster(cluster) do
+          :ok ->
+            merge_stop_error(result, :cluster_controller_stop_timeout)
+
+          {:error, force_error} ->
+            result
+            |> merge_stop_error(:cluster_controller_stop_timeout)
+            |> merge_stop_error(force_error)
+        end
+    end
+  end
+
+  defp force_stop_cluster(cluster) do
+    case GenServer.whereis(cluster) do
+      pid when is_pid(pid) ->
+        Process.unlink(pid)
+        monitor_ref = Process.monitor(pid)
+        Process.exit(pid, :kill)
+
+        receive do
+          {:DOWN, ^monitor_ref, :process, ^pid, _reason} -> :ok
+        after
+          @controller_stop_timeout ->
+            Process.demonitor(monitor_ref, [:flush])
+            {:error, :cluster_controller_force_stop_timeout}
+        end
+
+      nil ->
+        :ok
+    end
+  end
+
+  defp merge_stop_error(:ok, reason), do: {:error, reason}
+
+  defp merge_stop_error({:error, {:multiple_errors, errors}}, reason),
+    do: {:error, {:multiple_errors, errors ++ [reason]}}
+
+  defp merge_stop_error({:error, first}, second),
+    do: {:error, {:multiple_errors, [first, second]}}
 
   defp ensure_distribution_started do
     if Node.alive?(), do: ensure_longnames(), else: {:error, :distribution_not_started}
