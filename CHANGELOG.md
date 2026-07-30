@@ -22,6 +22,8 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   parallel.
 - Limited the full suite to three concurrent ExUnit modules and kept its runtime
   below ten seconds on the development environment.
+- Removed CI formatting checks because formatter output differs across the
+  supported Elixir versions.
 
 ## [0.1.0] - 2026-07-30
 
