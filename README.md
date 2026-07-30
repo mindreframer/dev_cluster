@@ -1,5 +1,9 @@
 # DevCluster
 
+[![CI](https://github.com/mindreframer/dev_cluster/actions/workflows/ci.yml/badge.svg)](https://github.com/mindreframer/dev_cluster/actions/workflows/ci.yml)
+[![Hex.pm](https://img.shields.io/hexpm/v/dev_cluster.svg)](https://hex.pm/packages/dev_cluster)
+[![HexDocs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/dev_cluster/)
+
 `DevCluster` starts real local BEAM nodes for testing distributed Elixir code.
 It combines the per-cluster ownership model of
 [LocalCluster](https://github.com/whitfin/local-cluster) with the modern
@@ -33,7 +37,7 @@ Add the package as a test dependency:
 ```elixir
 defp deps do
   [
-    {:dev_cluster, path: "../dev_cluster", only: :test}
+    {:dev_cluster, "~> 0.1.0", only: :test}
   ]
 end
 ```
@@ -129,8 +133,9 @@ configuration are copied before selected applications start.
 
 When the manager has a running `:cover_server`—for example under
 `mix test --cover`—DevCluster calls `:cover.start(nodes)` before application
-startup. Calls made on child nodes are therefore included in the manager's coverage
-report. Shutdown flushes remote counters before detaching a node from `:cover`.
+startup. Calls made on child nodes are therefore included in the manager's
+coverage report. Shutdown flushes remote counters before detaching a node from
+`:cover`.
 
 ## Failure behavior
 
@@ -151,8 +156,9 @@ names and external resources are unique. Use `hidden: true` to prevent unrelated
 parallel clusters from interacting through `:global`; tests specifically
 covering `:global` should use visible nodes and remain synchronous. Keep tests
 that manipulate VM-global state such as `:cover_server` synchronous, and use a
-modest `max_cases` value because every cluster member is a full BEAM process. The package's own suite
-marks shutdown-timeout scenarios as `:heavy`, so they can be targeted directly:
+modest `max_cases` value because every cluster member is a full BEAM process.
+The package's own suite marks shutdown-timeout scenarios as `:heavy`, so they
+can be targeted directly:
 
 ```bash
 mix test --exclude heavy
@@ -167,6 +173,10 @@ Generate API documentation explicitly in the isolated docs environment:
 MIX_ENV=docs mix deps.get
 MIX_ENV=docs mix docs
 ```
+
+## Maintainer
+
+Roman Heinrich — [roman.heinrich@gmail.com](mailto:roman.heinrich@gmail.com)
 
 ## Origins
 
