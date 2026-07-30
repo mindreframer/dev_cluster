@@ -176,10 +176,6 @@ MIX_ENV=docs mix deps.get
 MIX_ENV=docs mix docs
 ```
 
-## Maintainer
-
-Roman Heinrich — [roman.heinrich@gmail.com](mailto:roman.heinrich@gmail.com)
-
 ## Origins
 
 The API and lifecycle model are based on LocalCluster. Coverage propagation and
