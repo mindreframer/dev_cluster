@@ -3,6 +3,8 @@
 [![CI](https://github.com/mindreframer/dev_cluster/actions/workflows/ci.yml/badge.svg)](https://github.com/mindreframer/dev_cluster/actions/workflows/ci.yml)
 [![Hex.pm](https://img.shields.io/hexpm/v/dev_cluster.svg)](https://hex.pm/packages/dev_cluster)
 [![HexDocs](https://img.shields.io/badge/hex-docs-blue.svg)](https://hexdocs.pm/dev_cluster/)
+[![Hex.pm Downloads](https://img.shields.io/hexpm/dt/dev_cluster.svg)](https://hex.pm/packages/dev_cluster)
+[![License](https://img.shields.io/hexpm/l/dev_cluster.svg)](LICENSE)
 
 `DevCluster` starts real local BEAM nodes for testing distributed Elixir code.
 It combines the per-cluster ownership model of
