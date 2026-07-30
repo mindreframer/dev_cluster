@@ -161,6 +161,13 @@ mix test --only heavy
 
 Release notes are available in [CHANGELOG.md](CHANGELOG.md).
 
+Generate API documentation explicitly in the isolated docs environment:
+
+```bash
+MIX_ENV=docs mix deps.get
+MIX_ENV=docs mix docs
+```
+
 ## Origins
 
 The API and lifecycle model are based on LocalCluster. Coverage propagation and

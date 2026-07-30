@@ -24,6 +24,8 @@ based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
   below ten seconds on the development environment.
 - Removed CI formatting checks because formatter output differs across the
   supported Elixir versions.
+- Isolated ExDoc and its parser/makeup dependencies in the `:docs` environment,
+  so development, compilation, and test runs do not compile documentation tools.
 
 ## [0.1.0] - 2026-07-30
 

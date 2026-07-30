@@ -23,7 +23,7 @@ defmodule DevCluster.MixProject do
 
   defp deps do
     [
-      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
+      {:ex_doc, "~> 0.34", only: :docs, runtime: false}
     ]
   end
 
