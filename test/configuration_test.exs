@@ -29,8 +29,7 @@ defmodule DevCluster.ConfigurationTest do
   test "requires additional files on remote nodes" do
     file = Path.expand("../fixtures/remote_fixture.ex", __DIR__)
 
-    {:ok, cluster} =
-      start_cluster(1, prefix: unique_prefix("files"), files: [file])
+    {:ok, cluster} = start_cluster(1, prefix: unique_prefix("files"), files: [file])
 
     {:ok, [node]} = DevCluster.nodes(cluster)
 
@@ -83,8 +82,7 @@ defmodule DevCluster.ConfigurationTest do
     assert {:error, {:invalid_amount, 0}} = DevCluster.start(cluster, 0)
     assert {:error, {:invalid_stop_timeout, 0}} = DevCluster.stop(cluster, timeout: 0)
 
-    assert {:error, {:unknown_stop_options, [:unknown]}} =
-             DevCluster.stop(cluster, unknown: 1)
+    assert {:error, {:unknown_stop_options, [:unknown]}} = DevCluster.stop(cluster, unknown: 1)
 
     :ok = DevCluster.stop(cluster)
   end
